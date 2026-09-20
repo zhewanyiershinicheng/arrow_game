@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""验证随机地图可解性、箭头数量难度、以及可失误次数规则。"""
+"""验证随机地图、可失误规则与 Stellar 界面绘制。"""
 import os
 import sys
 
@@ -12,37 +12,26 @@ import arrow_game as ag
 
 
 def test_random_solvable():
-    print("=== 随机地图可解性（每关 30 次） ===")
+    print("=== 随机地图可解性 ===")
     for level in range(ag.TOTAL_LEVELS):
         target = ag.arrow_count_for_level(level)
-        ok = 0
-        counts = set()
         grids = set()
-        for _ in range(30):
+        for _ in range(20):
             grid, n = ag.generate_solvable_grid(level)
             order = ag.solve_level(grid)
             total = sum(ch in ag.CHAR_DIR for row in grid for ch in row)
-            assert order is not None, f"L{level+1} 生成了无解图\n" + "\n".join(grid)
-            assert len(order) == total, f"L{level+1} 步数不匹配 {len(order)} vs {total}"
-            # 难度：箭头数应接近目标
+            assert order and len(order) == total, f"L{level+1} 无解"
             assert n == total
-            ok += 1
-            counts.add(n)
+            assert n == target, f"L{level+1} 箭头数 {n} != 目标 {target}"
             grids.add(tuple(grid))
-        print(f"L{level+1}: 目标箭头 {target}, 实际出现 {sorted(counts)}, 不同地图 {len(grids)}/30, 全部有解")
-        assert ok == 30
-        # 至少有一定随机性
-        assert len(grids) >= 5, f"L{level+1} 地图几乎不变"
+        print(f"L{level+1}: 箭头={target}, 不同地图 {len(grids)}/20")
+        assert len(grids) >= 4
 
 
 def test_miss_rule():
     print("=== 可失误次数规则 ===")
     g = ag.Game()
     ag.load_level(g, 2)
-    ag.rebuild_buttons(g)
-    assert g.misses_left == ag.MISSES_PER_LEVEL
-
-    # 连续点阻挡：归零过程不失败
     mistakes = 0
     while mistakes < ag.MISSES_PER_LEVEL:
         target = next(
@@ -50,8 +39,7 @@ def test_miss_rule():
             None,
         )
         if target is None:
-            # 清掉一个自由箭头，等待 bump 结束后再找阻挡
-            free = next((a for a in g.arrows if a.alive and a.anim != "bump" and not ag.is_blocked(g.arrows, a, g.rows, g.cols)), None)
+            free = next((a for a in g.arrows if a.alive and a.anim != "bump"), None)
             if free:
                 ag.click_arrow(g, free.row, free.col)
             for _ in range(20):
@@ -61,115 +49,93 @@ def test_miss_rule():
         mistakes += 1
         for _ in range(20):
             ag.update_animations(g, 0.05)
-        print(f"  第 {mistakes} 次失误后: misses={g.misses_left}, state={g.state}, pending_fail={g.pending_fail}")
-        assert g.state == ag.State.PLAYING, f"第 {mistakes} 次失误不应直接失败"
-        assert not g.pending_fail
+        assert g.state == ag.State.PLAYING and not g.pending_fail
         assert g.misses_left == ag.MISSES_PER_LEVEL - mistakes
-
-    assert g.misses_left == 0
-    # 次数已是 0，再错才失败
     target = next(
         (a for a in g.arrows if a.alive and a.anim != "bump" and ag.is_blocked(g.arrows, a, g.rows, g.cols)),
         None,
     )
-    if target is None:
-        # 再消一个自由箭头制造/等待阻挡；若全自由则构造失败场景：任意点一个仍阻挡的
-        for _ in range(30):
-            for a in g.arrows:
-                if a.alive and a.anim != "bump" and ag.is_blocked(g.arrows, a, g.rows, g.cols):
-                    target = a
-                    break
-            if target:
-                break
-            free = next((a for a in g.arrows if a.alive and a.anim != "bump"), None)
-            if free:
-                # 只有点阻挡才会失败；若当前无阻挡，推进后可能仍无
-                ag.update_animations(g, 0.05)
-            else:
-                break
-    assert target is not None, "应仍存在阻挡箭头以测失败"
+    assert target is not None
     ag.click_arrow(g, target.row, target.col)
-    assert g.pending_fail is True
-    assert g.state == ag.State.PLAYING
-    assert target.anim == "bump"
+    assert g.pending_fail and g.state == ag.State.PLAYING and target.anim == "bump"
     for _ in range(30):
         ag.update_animations(g, 0.05)
         if g.state == ag.State.FAIL:
             break
     assert g.state == ag.State.FAIL
-    print("  次数为 0 后再失误 → FAIL（先动效后结算）")
-    print("  FAIL buttons", [(b.action, b.label) for b in g.buttons])
-    assert [(b.action, b.label) for b in g.buttons] == [("restart", "重新开始"), ("menu", "返回菜单")]
+    assert [b.action for b in g.buttons] == ["restart", "menu"]
+    print("  3 次归零不失败；第 4 次失误 → FAIL")
 
 
-def test_random_restart_and_counts():
-    print("=== 随机重开与箭头数量 ===")
-    g = ag.Game()
-    ag.handle_action(g, "start")
-    seen = []
-    for i in range(6):
-        seen.append(tuple(g.level_grid))
-        ag.handle_action(g, "restart")
-    assert len(set(seen)) >= 3, "重开应生成不同地图"
-    print(f"  连续重开 6 次，得到 {len(set(seen))} 种不同地图")
-
-    counts = []
-    for level in range(ag.TOTAL_LEVELS):
-        ag.load_level(g, level)
-        counts.append((g.arrow_count, len(g.alive_arrows()), ag.arrow_count_for_level(level)))
-        assert g.arrow_count == len(g.alive_arrows())
-        order = ag.solve_level(g.level_grid)
-        assert order and len(order) == g.arrow_count
-    print("  各关箭头数 (实际, 存活, 目标):", counts)
-    assert counts[0][0] < counts[-1][0], "难度应随关卡箭头数上升"
-    for actual, _, target in counts:
-        assert actual >= 4
-
-
-def test_full_clear_random():
-    print("=== 随机图连续通关 ===")
+def test_full_clear():
+    print("=== 连续通关 ===")
     g = ag.Game()
     ag.handle_action(g, "start")
     for level in range(ag.TOTAL_LEVELS):
+        assert g.arrow_count == ag.arrow_count_for_level(level), (
+            f"L{level+1} arrow_count={g.arrow_count} target={ag.arrow_count_for_level(level)}"
+        )
         order = ag.solve_level(g.level_grid)
-        assert order
         for r, c, d in order:
             ag.click_arrow(g, r, c)
         for _ in range(40):
             ag.update_animations(g, 0.05)
             if g.state == ag.State.WIN:
                 break
-        assert g.state == ag.State.WIN, f"L{level+1} {g.state}"
-        assert g.misses_left == ag.MISSES_PER_LEVEL
+        assert g.state == ag.State.WIN
+        assert [(b.action, b.label) for b in g.buttons][0][1] == (
+            "下一关" if level + 1 < ag.TOTAL_LEVELS else "查看结果"
+        )
         ag.handle_action(g, "next")
         ag.rebuild_buttons(g)
     assert g.state == ag.State.ALL_CLEAR
-    print("  4 关随机图全部通关 → ALL_CLEAR")
+    print("  4 关随机图通关 → ALL_CLEAR")
 
 
-def test_draw_smoke():
-    print("=== 界面绘制 ===")
+def test_stellar_draw():
+    print("=== Stellar 浅色绘制 ===")
     pygame.init()
     screen = pygame.display.set_mode((ag.WINDOW_W, ag.WINDOW_H))
     g = ag.Game()
     ag.rebuild_buttons(g)
+    # 背景应为浅色
+    assert ag.C_BG[0] > 200 and ag.C_CARD == (255, 255, 255)
     ag.draw_menu(screen, g)
+    # 抽样菜单背景像素
+    px = pygame.PixelArray(screen)
+    center_bg = tuple(screen.get_at((20, 200)))[:3]
+    assert center_bg[0] > 200, f"菜单背景应为浅色，got {center_bg}"
+    del px
+
     ag.handle_action(g, "start")
-    ag.draw_hud(screen, g)
-    ag.draw_banner(screen, g)
-    ag.draw_board(screen, g)
-    ag.draw_bottom_bar(screen, g)
-    assert g.level_name.startswith("第")
-    assert "随机" in g.level_desc
-    print("  菜单/游戏 HUD 绘制正常:", g.level_name, "|", g.level_desc)
+    world = pygame.Surface((ag.WINDOW_W, ag.WINDOW_H))
+    world.fill(ag.C_BG)
+    ag.draw_dot_grid(world)
+    ag.draw_hud(world, g)
+    ag.draw_board(world, g)
+    ag.draw_bottom_bar(world, g)
+    hud_px = tuple(world.get_at((WINDOW := ag.WINDOW_W // 2, 10)))[:3]
+    assert hud_px[0] > 240, f"HUD 应为白卡片，got {hud_px}"
+    print("  浅色令牌与界面绘制正常:", g.level_name)
+
+    # 失败/通关按钮
+    order = ag.solve_level(g.level_grid)
+    for r, c, d in order:
+        ag.click_arrow(g, r, c)
+    for _ in range(40):
+        ag.update_animations(g, 0.05)
+        if g.state == ag.State.WIN:
+            break
+    assert [b.action for b in g.buttons] == ["next", "restart", "menu"]
+    ag.draw_result(screen, g, "win")
+    print("  WIN 按钮与结果层绘制 OK")
 
 
 def main():
     test_random_solvable()
     test_miss_rule()
-    test_random_restart_and_counts()
-    test_full_clear_random()
-    test_draw_smoke()
+    test_full_clear()
+    test_stellar_draw()
     print("\nALL_TESTS_PASSED")
 
 

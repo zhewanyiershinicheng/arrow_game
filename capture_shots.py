@@ -1,9 +1,10 @@
 # -*- coding: utf-8 -*-
-"""导出界面截图，用于排版检查。"""
+"""导出 Stellar 浅色界面截图。"""
 import os
 import sys
 
 os.environ["SDL_VIDEODRIVER"] = "dummy"
+os.environ["ARROW_GAME_HEADLESS"] = "1"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pygame
@@ -21,14 +22,14 @@ def save(screen, name):
 
 def blit_game(screen, game):
     world = pygame.Surface((ag.WINDOW_W, ag.WINDOW_H))
-    world.fill(ag.COLOR_BG)
+    world.fill(ag.C_BG)
+    ag.draw_dot_grid(world)
     ag.draw_hud(world, game)
     ag.draw_banner(world, game)
     ag.draw_board(world, game)
     ag.draw_bottom_bar(world, game)
-    screen.fill(ag.COLOR_BG)
+    screen.fill(ag.C_BG)
     screen.blit(world, (0, 0))
-    return world
 
 
 def main():
@@ -37,7 +38,7 @@ def main():
     game = ag.Game()
     ag.rebuild_buttons(game)
 
-    screen.fill(ag.COLOR_BG)
+    screen.fill(ag.C_BG)
     ag.draw_menu(screen, game)
     save(screen, "1_menu.png")
 
@@ -46,59 +47,58 @@ def main():
     blit_game(screen, game)
     save(screen, "2_playing.png")
 
-    # 找阻挡箭头并点击，截碰撞反馈
-    blocked = next(a for a in game.arrows if ag.is_blocked(game.arrows, a, game.rows, game.cols))
-    ag.click_arrow(game, blocked.row, blocked.col)
-    assert game.misses_left == ag.MISSES_PER_LEVEL - 1
-    for _ in range(5):
-        ag.update_animations(game, 0.04)
-    blit_game(screen, game)
-    save(screen, "3_bump.png")
-    print("after bump: state=", game.state, "misses=", game.misses_left, "pending_fail=", game.pending_fail)
+    blocked = next(
+        (a for a in game.arrows if ag.is_blocked(game.arrows, a, game.rows, game.cols)),
+        None,
+    )
+    if blocked:
+        ag.click_arrow(game, blocked.row, blocked.col)
+        for _ in range(5):
+            ag.update_animations(game, 0.04)
+        blit_game(screen, game)
+        save(screen, "3_bump.png")
+        print("bump misses", game.misses_left)
 
-    # 失败：持续点击阻挡箭头直至耗尽，并等待动画结算
-    while game.state == ag.State.PLAYING and not game.pending_fail:
-        blocked = None
-        free = None
-        for a in game.arrows:
-            if not a.alive or a.anim == "bump":
-                continue
-            if ag.is_blocked(game.arrows, a, game.rows, game.cols):
-                blocked = blocked or a
-            else:
-                free = free or a
-        if blocked:
-            ag.click_arrow(game, blocked.row, blocked.col)
-        elif free:
-            # 为了让失败更容易复现：只点阻挡；若暂无阻挡则推进动画
-            ag.update_animations(game, 0.15)
-        else:
-            ag.update_animations(game, 0.15)
-        if game.misses_left <= 0:
-            game.pending_fail = True  # 确保进入结算
-
+    # FAIL on higher level for denser board
+    ag.load_level(game, 2)
+    ag.rebuild_buttons(game)
+    for _ in range(30):
+        if game.state != ag.State.PLAYING or game.pending_fail:
+            break
+        t = next(
+            (
+                a
+                for a in game.arrows
+                if a.alive and a.anim != "bump" and ag.is_blocked(game.arrows, a, game.rows, game.cols)
+            ),
+            None,
+        )
+        if t is None:
+            ag.update_animations(game, 0.12)
+            continue
+        ag.click_arrow(game, t.row, t.col)
     for _ in range(40):
         ag.update_animations(game, 0.05)
         if game.state == ag.State.FAIL:
             break
-    assert game.state == ag.State.FAIL, game.state
-    assert [b.action for b in game.buttons] == ["restart", "menu"], [b.action for b in game.buttons]
+    assert game.state == ag.State.FAIL
+    assert [(b.action, b.label) for b in game.buttons] == [
+        ("restart", "重新开始"),
+        ("menu", "返回菜单"),
+    ]
     blit_game(screen, game)
     ag.draw_result(screen, game, "fail")
     save(screen, "4_fail.png")
 
-    # 通关
     ag.handle_action(game, "start")
-    ag.rebuild_buttons(game)
-    order = ag.solve_level(ag.LEVELS[0]["grid"])
+    order = ag.solve_level(game.level_grid)
     for r, c, d in order:
         ag.click_arrow(game, r, c)
     for _ in range(40):
         ag.update_animations(game, 0.05)
         if game.state == ag.State.WIN:
             break
-    assert game.state == ag.State.WIN, game.state
-    assert [b.action for b in game.buttons] == ["next", "restart", "menu"]
+    assert game.state == ag.State.WIN
     blit_game(screen, game)
     ag.draw_result(screen, game, "win")
     save(screen, "5_win.png")
