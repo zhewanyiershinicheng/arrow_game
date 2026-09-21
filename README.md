@@ -4,6 +4,7 @@
 
 界面采用 **浅色** 风格：浅灰底、白卡片、蓝色强调、胶囊徽章。
 
+
 ---
 
 ## 环境要求
@@ -46,12 +47,14 @@ python arrow_game.py
 4. 清空本关全部箭头 → 通关。  
 5. 地图**每次随机生成**，并用逆序构造 + 求解器保证**一定有解**。  
 6. 难度主要由**箭头数量**决定（剧情模式随关卡上升）。
-
 ---
+## 游戏实机
+<img width="1346" height="1122" alt="image" src="https://github.com/user-attachments/assets/10b912f1-927c-4125-9e53-e604b5af0bbd" />
+<img width="1346" height="1116" alt="image" src="https://github.com/user-attachments/assets/062414cb-5a00-4f41-874a-161ff2cf876b" />
+
 
 ## 游戏模式
-
-### 剧情模式
+### 正常模式
 
 - 共 **4 关**，随机地图  
 - 箭头数量约：5 → 7 → 9 → 11  
